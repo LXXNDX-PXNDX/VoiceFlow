@@ -43,7 +43,17 @@ jobs:
 
       - name: Build
         working-directory: website
-        run: npm run build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-build-log
+          path: website/build.log
 
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
