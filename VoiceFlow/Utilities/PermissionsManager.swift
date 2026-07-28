@@ -10,33 +10,13 @@ final class PermissionsManager {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    /// AXIsProcessTrusted is the official check, but on recent macOS versions it can
-    /// briefly return a stale value after the user comes back from System Settings.
-    /// A harmless system-wide AX query provides a second, functional verification.
+    /// Uses only Apple's official TCC-backed trust check.
+    ///
+    /// Do not infer permission from individual AX API return codes: calls such as
+    /// `AXUIElementCopyAttributeValue` can return `noValue`, `attributeUnsupported` or
+    /// `cannotComplete` even when Accessibility access is disabled. Treating those results
+    /// as success caused VoiceFlow 1.1.1 to display a false green permission state.
     func hasAccessibilityAccess() -> Bool {
-        if AXIsProcessTrusted() || trustedWithoutPrompt() {
-            return true
-        }
-
-        let systemWide = AXUIElementCreateSystemWide()
-        var focusedElement: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(
-            systemWide,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedElement
-        )
-
-        switch result {
-        case .success, .noValue, .attributeUnsupported, .cannotComplete:
-            return true
-        case .apiDisabled:
-            return false
-        default:
-            return false
-        }
-    }
-
-    private func trustedWithoutPrompt() -> Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
@@ -60,9 +40,9 @@ final class PermissionsManager {
         }
     }
 
-    /// Shows the Accessibility prompt and opens the matching privacy pane.
+    /// Requests Accessibility access and always opens the exact System Settings page.
+    /// The status remains false until macOS itself confirms the current VoiceFlow binary.
     func promptForAccessibility() {
-        if hasAccessibilityAccess() { return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         openAccessibilitySettings()
@@ -94,15 +74,29 @@ final class PermissionsManager {
     }
 
     func openMicrophoneSettings() {
-        openSystemSettings(pane: "Privacy_Microphone")
+        openPrivacyPane("Privacy_Microphone")
     }
 
     func openAccessibilitySettings() {
-        openSystemSettings(pane: "Privacy_Accessibility")
+        openPrivacyPane("Privacy_Accessibility")
     }
 
-    private func openSystemSettings(pane: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
-        NSWorkspace.shared.open(url)
+    private func openPrivacyPane(_ pane: String) {
+        // The first URL works across current macOS versions. The second is a fallback for
+        // newer System Settings routing. Opening the app itself is the final safe fallback.
+        let routes = [
+            "x-apple.systempreferences:com.apple.preference.security?\(pane)",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)"
+        ]
+
+        for route in routes {
+            guard let url = URL(string: route) else { continue }
+            if NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+
+        let settingsApp = URL(fileURLWithPath: "/System/Applications/System Settings.app")
+        NSWorkspace.shared.open(settingsApp)
     }
 }
