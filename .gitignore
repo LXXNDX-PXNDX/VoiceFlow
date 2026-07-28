@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Xcode
+build/
+*.xcodeproj/
+!VoiceFlow.xcodeproj/
+xcuserdata/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# whisper.cpp build artifacts
+whisper.cpp/build/
+*.o
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.xcworkspace/
+!VoiceFlow.xcodeproj/project.xcworkspace/
+
+# Logs
+*.log
+
+# Environment
+.env

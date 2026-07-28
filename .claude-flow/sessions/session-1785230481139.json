@@ -1,0 +1,14 @@
+{
+  "id": "session-1785230481139",
+  "startedAt": "2026-07-28T09:21:21.139Z",
+  "cwd": "/Users/LeandiPandi/Desktop/VoiceFlow",
+  "context": {},
+  "metrics": {
+    "edits": 0,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-07-28T09:21:21.970Z",
+  "duration": 831
+}
