@@ -1,7 +1,8 @@
 import { motion, useReducedMotion } from 'framer-motion'
 
 const downloadUrl =
-  'https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/latest/download/VoiceFlow.dmg'
+  'https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/download/v1.2.4/VoiceFlow.dmg'
+const sourceUrl = 'https://github.com/LXXNDX-PXNDX/VoiceFlow'
 
 const useCases = [
   {
@@ -103,13 +104,23 @@ function App() {
         <a href="#top" aria-label="VoiceFlow home">
           <VoiceMark />
         </a>
-        <a
-          href={downloadUrl}
-          className="group inline-flex items-center gap-2 rounded-full border border-black/15 bg-white/60 px-4 py-2 text-sm font-medium backdrop-blur transition hover:border-black/35 hover:bg-white"
-        >
-          Download
-          <ArrowIcon />
-        </a>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden rounded-full px-3 py-2 text-sm font-medium text-black/55 transition hover:text-black sm:inline-flex"
+          >
+            Source code
+          </a>
+          <a
+            href={downloadUrl}
+            className="group inline-flex items-center gap-2 rounded-full border border-black/15 bg-white/60 px-4 py-2 text-sm font-medium backdrop-blur transition hover:border-black/35 hover:bg-white"
+          >
+            Download
+            <ArrowIcon />
+          </a>
+        </div>
       </header>
 
       <section id="top" className="relative px-5 pb-24 pt-16 sm:px-8 sm:pb-32 sm:pt-24 lg:px-12 lg:pt-28">
@@ -167,7 +178,7 @@ function App() {
                   <ArrowIcon />
                 </span>
               </a>
-              <span className="text-xs text-black/45">Free download · DMG installer</span>
+              <span className="text-xs text-black/45">Version 1.2.4 · Free DMG installer</span>
             </motion.div>
           </div>
 
@@ -294,7 +305,14 @@ function App() {
       <footer className="bg-[#11110f] px-5 py-8 text-white sm:px-8 lg:px-12">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-5 border-t border-white/15 pt-8 text-sm text-white/45 sm:flex-row sm:items-center sm:justify-between">
           <VoiceMark dark />
-          <p>Free macOS speech-to-text.</p>
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="transition hover:text-white"
+          >
+            View source code on GitHub
+          </a>
           <p>© {new Date().getFullYear()} VoiceFlow</p>
         </div>
       </footer>
