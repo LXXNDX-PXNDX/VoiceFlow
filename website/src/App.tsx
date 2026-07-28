@@ -9,8 +9,11 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+export const RELEASE_VERSION = "1.1.2";
 export const DOWNLOAD_URL =
-  "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/latest";
+  "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/download/v1.1.2/VoiceFlow-1.1.2-arm64.dmg";
+export const RELEASE_URL =
+  "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.1.2";
 export const SOURCE_URL = "https://github.com/LXXNDX-PXNDX/VoiceFlow";
 const LATEST_RELEASE_API_URL =
   "https://api.github.com/repos/LXXNDX-PXNDX/VoiceFlow/releases/latest";
@@ -47,7 +50,7 @@ async function startMacDownload(event: MouseEvent<HTMLAnchorElement>) {
       return;
     }
   } catch (error) {
-    console.warn("Direct download unavailable; opening the latest release instead.", error);
+    console.warn("Latest release lookup unavailable; downloading the verified build instead.", error);
   }
 
   window.location.assign(DOWNLOAD_URL);
@@ -109,10 +112,10 @@ function DownloadButton({ compact = false }: { compact?: boolean }) {
           ? "focus-ring inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-paper transition-transform hover:-translate-y-0.5"
           : "focus-ring group inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-ink px-7 py-4 text-base font-semibold text-paper shadow-[0_12px_40px_rgba(23,23,20,0.18)] transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_50px_rgba(23,23,20,0.24)] sm:px-8"
       }
-      aria-label="Download VoiceFlow for macOS"
+      aria-label={`Download VoiceFlow ${RELEASE_VERSION} for macOS`}
     >
       <ArrowDown className={compact ? "h-4 w-4" : "h-5 w-5"} aria-hidden="true" />
-      Download for macOS
+      {compact ? `Download ${RELEASE_VERSION}` : `Download VoiceFlow ${RELEASE_VERSION}`}
     </a>
   );
 }
@@ -166,7 +169,7 @@ function App() {
           >
             <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-ink/10 bg-white/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-ink/60">
               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-              Free and open source for macOS
+              VoiceFlow {RELEASE_VERSION} · Free and open source
             </div>
 
             <h1 className="text-balance text-[clamp(3.7rem,10vw,8.8rem)] font-semibold leading-[0.82] tracking-[-0.075em]">
@@ -193,7 +196,7 @@ function App() {
               </a>
             </div>
 
-            <p className="mt-5 text-sm text-ink/[0.45]">macOS 14 or newer · Apple Silicon · No account required</p>
+            <p className="mt-5 text-sm text-ink/[0.45]">Version {RELEASE_VERSION} · macOS 14 or newer · Apple Silicon · No account required</p>
           </motion.div>
 
           <motion.div
@@ -309,24 +312,24 @@ function App() {
         <section id="download" className="border-t border-ink/10">
           <motion.div {...reveal} className="mx-auto flex w-full max-w-7xl flex-col items-start justify-between gap-10 px-5 py-24 sm:px-8 sm:py-32 lg:flex-row lg:items-end lg:px-12 lg:py-40">
             <div className="max-w-3xl">
-              <p className="section-label">Free forever</p>
+              <p className="section-label">Latest verified release</p>
               <h2 className="mt-5 text-balance text-5xl font-semibold leading-[0.9] tracking-[-0.065em] sm:text-7xl lg:text-8xl">
                 Give your keyboard a break.
               </h2>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink/[0.58]">
-                Click once to download the newest macOS build. If a direct file is unavailable, VoiceFlow safely opens the latest GitHub release instead.
+                Download VoiceFlow {RELEASE_VERSION} for Apple Silicon. The button checks GitHub for a newer verified DMG and falls back to this release automatically.
               </p>
             </div>
             <div className="flex w-full flex-col items-start gap-4 lg:w-auto lg:items-end">
               <DownloadButton />
               <a
-                href={SOURCE_URL}
+                href={RELEASE_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="focus-ring inline-flex items-center gap-2 rounded-full text-sm font-semibold text-ink/[0.52] transition-colors hover:text-ink"
               >
                 <GitHubMark className="h-4 w-4" aria-hidden="true" />
-                Inspect the source on GitHub
+                View release notes
               </a>
             </div>
           </motion.div>
