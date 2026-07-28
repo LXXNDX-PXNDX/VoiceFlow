@@ -1,0 +1,12 @@
+{
+  "version": "1.1.2",
+  "tag": "v1.1.2",
+  "release_url": "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.1.2",
+  "asset": "VoiceFlow-1.1.2-arm64.dmg",
+  "asset_size_bytes": 2870880,
+  "sha256": "10cc5621c1aa7b02f8d08d9bda5b7d8fe53fd4f9f182223a0fc4545b3d4711b3",
+  "commit": "670f03458152bcab963ef8f86e50331a0b1b7e3f",
+  "accessibility_check": "strict official macOS trust result",
+  "runtime_test": "whisper.cpp 1.8.6 inference passed",
+  "verified": true
+}
