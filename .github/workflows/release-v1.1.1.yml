@@ -1,0 +1,165 @@
+name: Publish VoiceFlow 1.1.1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v1.1.1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voiceflow-release-1.1.1
+  cancel-in-progress: false
+
+env:
+  TAG_NAME: v1.1.1
+  RELEASE_NAME: VoiceFlow 1.1.1
+  DMG_NAME: VoiceFlow-1.1.1-arm64.dmg
+
+jobs:
+  build-test-release:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build matching whisper.cpp headers and libraries
+        run: bash scripts/build-whisper-libs.sh
+
+      - name: Run Whisper ABI and inference smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/ggml-tiny.bin" \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+          clang -std=c11 -O2 \
+            -I VoiceFlow/Transcription \
+            -I VoiceFlow/Headers \
+            VoiceFlow/Transcription/WhisperC.c \
+            scripts/whisper-smoke-test.c \
+            -L VoiceFlow/Libs \
+            -lwhisper -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-blas \
+            -lc++ \
+            -framework Accelerate \
+            -framework Metal \
+            -framework MetalKit \
+            -framework Foundation \
+            -o "$RUNNER_TEMP/whisper-smoke-test"
+
+          "$RUNNER_TEMP/whisper-smoke-test" "$RUNNER_TEMP/ggml-tiny.bin"
+
+      - name: Build optimized Apple Silicon app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project VoiceFlow.xcodeproj \
+            -scheme VoiceFlow \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/VoiceFlowDerivedData" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify and package application
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/VoiceFlowDerivedData/Build/Products/Release/VoiceFlow.app"
+          test -d "$APP_PATH"
+          test -x "$APP_PATH/Contents/MacOS/VoiceFlow"
+
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")
+          ARCH=$(lipo -archs "$APP_PATH/Contents/MacOS/VoiceFlow")
+          test "$VERSION" = "1.1.1"
+          test "$BUILD" = "3"
+          echo "$ARCH" | grep -qw arm64
+
+          codesign --force --deep --sign - --identifier com.voiceflow.app "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          STAGING="$RUNNER_TEMP/VoiceFlowDMG"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          ditto "$APP_PATH" "$STAGING/VoiceFlow.app"
+          ln -s /Applications "$STAGING/Applications"
+
+          hdiutil create \
+            -volname "VoiceFlow" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          test -s "$DMG_NAME"
+          shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256"
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## VoiceFlow 1.1.1
+
+          This hotfix replaces VoiceFlow 1.1.0.
+
+          ### Fixed
+
+          - Fixed the crash inside `whisper_full_with_state` after recording
+          - Whisper headers and static libraries now always come from the exact same pinned version
+          - Added a real model-loading and inference test before every release
+          - Improved detection when microphone or Accessibility permission is enabled in System Settings
+          - VoiceFlow rechecks immediately when you return from System Settings
+          - Global hotkeys restart automatically after Accessibility access becomes available
+          - Added **Repair** for stale VoiceFlow Accessibility entries left by an app update
+          - Added CPU fallback if GPU model initialization fails
+
+          ### Requirements
+
+          - Apple Silicon Mac
+          - macOS 14.0 or later
+
+          ### Installation
+
+          1. Delete VoiceFlow 1.1.0 from Applications.
+          2. Download `VoiceFlow-1.1.1-arm64.dmg`.
+          3. Move VoiceFlow into Applications.
+          4. Right-click VoiceFlow and select **Open** the first time.
+          5. If Accessibility already shows a checkmark but VoiceFlow does not recognize it, open VoiceFlow Settings → Permissions → **Repair**.
+
+          VoiceFlow runs speech recognition locally. This community build is ad-hoc signed and not Apple-notarized.
+          NOTES
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md --latest
+            gh release upload "$TAG_NAME" "$DMG_NAME" "$DMG_NAME.sha256" --clobber
+          else
+            gh release create "$TAG_NAME" \
+              "$DMG_NAME" \
+              "$DMG_NAME.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+
+      - name: Verify published asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" --json tagName,name,isDraft,isPrerelease,url,assets
+          gh release download "$TAG_NAME" --pattern "$DMG_NAME" --dir "$RUNNER_TEMP/release-check"
+          cmp "$DMG_NAME" "$RUNNER_TEMP/release-check/$DMG_NAME"
