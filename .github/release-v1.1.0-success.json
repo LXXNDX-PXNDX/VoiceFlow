@@ -1,0 +1,10 @@
+{
+  "version": "1.1.0",
+  "tag": "v1.1.0",
+  "release_url": "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.1.0",
+  "asset": "VoiceFlow-1.1.0-arm64.dmg",
+  "asset_size_bytes": 2843805,
+  "sha256": "be51eabca3fbcb6cb4af9e9a6e758c5a8931354192a223c0cf45616048007337",
+  "commit": "295dafbd2a040529bb4affabb6fac25201d68af3",
+  "verified": true
+}
