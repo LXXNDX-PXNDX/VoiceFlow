@@ -17,9 +17,14 @@ struct TranscriptionResult {
     let text: String?
     let durationSeconds: Double
     let processingSeconds: Double
+
+    var realtimeFactor: Double {
+        guard durationSeconds > 0 else { return 0 }
+        return processingSeconds / durationSeconds
+    }
 }
 
-/// Owns the whisper.cpp context: downloads the model, keeps it loaded, runs transcription.
+/// Owns the whisper.cpp context: downloads the model, keeps it loaded and serialises inference.
 final class WhisperService: NSObject {
 
     /// Reports model download/load state on the main queue.
@@ -35,8 +40,13 @@ final class WhisperService: NSObject {
     private var context: WhisperCtx?
     private var loadedModel: WhisperModel?
     private let contextLock = NSLock()
+
+    /// whisper.cpp contexts are not thread-safe. A single high-priority queue prevents model
+    /// replacement from racing an active transcription and keeps hot context memory reusable.
+    private let inferenceQueue = DispatchQueue(label: "com.voiceflow.whisper.inference",
+                                               qos: .userInitiated)
+
     private var downloadContinuation: CheckedContinuation<URL?, Never>?
-    private var downloadDestination: URL?
 
     var isModelLoaded: Bool {
         contextLock.lock(); defer { contextLock.unlock() }
@@ -60,7 +70,11 @@ final class WhisperService: NSObject {
 
     /// Makes `model` the active one, downloading it first if necessary.
     func prepare(model: WhisperModel) async {
-        if loadedModel == model, isModelLoaded {
+        contextLock.lock()
+        let alreadyLoaded = loadedModel == model && context != nil
+        contextLock.unlock()
+
+        if alreadyLoaded {
             state = .ready(model)
             return
         }
@@ -87,47 +101,58 @@ final class WhisperService: NSObject {
         state = .loading
         let path = localURL(for: model).path
 
-        let newContext: WhisperCtx? = await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: whisperc_init(path))
+        let loaded: Bool = await withCheckedContinuation { continuation in
+            inferenceQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                guard let newContext = whisperc_init(path) else {
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                self.contextLock.lock()
+                let oldContext = self.context
+                self.context = newContext
+                self.loadedModel = model
+                self.contextLock.unlock()
+
+                if let oldContext { whisperc_free(oldContext) }
+                continuation.resume(returning: true)
             }
         }
 
-        guard let newContext = newContext else {
+        guard loaded else {
             state = .failed("Modell „\(model.rawValue)“ ist beschädigt. Bitte erneut laden.")
             // A truncated download would fail forever otherwise.
             try? FileManager.default.removeItem(at: localURL(for: model))
             return
         }
 
-        contextLock.lock()
-        let old = context
-        context = newContext
-        contextLock.unlock()
-        if let old = old { whisperc_free(old) }
-
-        loadedModel = model
         state = .ready(model)
-        NSLog("[Whisper] Model \(model.rawValue) loaded")
+        NSLog("[Whisper] Model \(model.rawValue) loaded with GPU acceleration")
     }
 
     // MARK: - Download
 
     private lazy var downloadSession: URLSession = {
-        URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForResource = 60 * 30
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }()
 
     private func download(_ model: WhisperModel) async -> Bool {
         NSLog("[Whisper] Downloading \(model.rawValue) …")
-        downloadDestination = localURL(for: model)
 
         let tempURL: URL? = await withCheckedContinuation { continuation in
             downloadContinuation = continuation
-            let task = downloadSession.downloadTask(with: model.downloadURL)
-            task.resume()
+            downloadSession.downloadTask(with: model.downloadURL).resume()
         }
 
-        guard let tempURL = tempURL else {
+        guard let tempURL else {
             NSLog("[Whisper] Download of \(model.rawValue) failed")
             return false
         }
@@ -148,38 +173,66 @@ final class WhisperService: NSObject {
 
     // MARK: - Transcription
 
-    func transcribe(samples: [Float], language: String) async -> TranscriptionResult {
+    func transcribe(samples: [Float],
+                    language: String,
+                    mode: RecognitionMode,
+                    customVocabulary: String,
+                    smartFormatting: Bool) async -> TranscriptionResult {
         let durationSeconds = Double(samples.count) / 16_000
 
-        contextLock.lock()
-        let ctx = context
-        contextLock.unlock()
-
-        guard let ctx = ctx else {
-            NSLog("[Whisper] No model loaded")
-            return TranscriptionResult(text: nil, durationSeconds: durationSeconds, processingSeconds: 0)
-        }
-
-        // Below ~0.4 s whisper has nothing to work with and returns noise.
         guard samples.count > 6_400 else {
             NSLog("[Whisper] Too short: \(String(format: "%.2f", durationSeconds)) s")
             return TranscriptionResult(text: nil, durationSeconds: durationSeconds, processingSeconds: 0)
         }
 
-        let threads = Int32(max(2, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        let resolvedLanguage = SpeechLanguage.resolvedCode(for: language)
+        let prompt = Self.prompt(from: customVocabulary)
+        let threads = Self.threadCount
 
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            inferenceQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: TranscriptionResult(text: nil,
+                                                                       durationSeconds: durationSeconds,
+                                                                       processingSeconds: 0))
+                    return
+                }
+
+                self.contextLock.lock()
+                let context = self.context
+                self.contextLock.unlock()
+
+                guard let context else {
+                    NSLog("[Whisper] No model loaded")
+                    continuation.resume(returning: TranscriptionResult(text: nil,
+                                                                       durationSeconds: durationSeconds,
+                                                                       processingSeconds: 0))
+                    return
+                }
+
                 let start = CFAbsoluteTimeGetCurrent()
-                let maxLen: Int32 = 1 << 16
-                let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: Int(maxLen))
-                buffer.initialize(repeating: 0, count: Int(maxLen))
+                let maxLength: Int32 = 1 << 16
+                let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: Int(maxLength))
+                buffer.initialize(repeating: 0, count: Int(maxLength))
                 defer { buffer.deallocate() }
 
+                let durationMilliseconds = Int32(min(Int32.max,
+                                                     Int(durationSeconds * 1_000)))
                 let ok = samples.withUnsafeBufferPointer { input -> Bool in
-                    guard let base = input.baseAddress else { return false }
-                    return language.withCString { lang in
-                        whisperc_transcribe(ctx, base, Int32(input.count), lang, threads, buffer, maxLen)
+                    guard let baseAddress = input.baseAddress else { return false }
+                    return resolvedLanguage.withCString { languageCString in
+                        prompt.withCString { promptCString in
+                            whisperc_transcribe(context,
+                                                baseAddress,
+                                                Int32(input.count),
+                                                languageCString,
+                                                threads,
+                                                mode.decoderCode,
+                                                durationMilliseconds,
+                                                promptCString,
+                                                buffer,
+                                                maxLength)
+                        }
                     }
                 }
 
@@ -193,8 +246,9 @@ final class WhisperService: NSObject {
                 }
 
                 let raw = String(cString: buffer)
-                let text = Self.clean(raw)
-                NSLog("[Whisper] \(String(format: "%.2f", elapsed)) s → \"\(text ?? "")\"")
+                let text = Self.clean(raw, smartFormatting: smartFormatting)
+                let factor = durationSeconds > 0 ? elapsed / durationSeconds : 0
+                NSLog("[Whisper] \(String(format: "%.2f", elapsed)) s (\(String(format: "%.2f", factor))× realtime) → \"\(text ?? "")\"")
                 continuation.resume(returning: TranscriptionResult(text: text,
                                                                    durationSeconds: durationSeconds,
                                                                    processingSeconds: elapsed))
@@ -202,19 +256,67 @@ final class WhisperService: NSObject {
         }
     }
 
-    /// whisper emits placeholders like `[BLANK_AUDIO]` or `(Musik)` for non-speech.
-    private static func clean(_ raw: String) -> String? {
+    private static var threadCount: Int32 {
+        let available = ProcessInfo.processInfo.activeProcessorCount
+        // 6–8 threads is typically the useful range on Apple Silicon; leaving two cores free
+        // keeps the UI and target application responsive while Whisper is decoding.
+        return Int32(max(2, min(8, available - 2)))
+    }
+
+    private static func prompt(from vocabulary: String) -> String {
+        let terms = vocabulary
+            .components(separatedBy: CharacterSet(charactersIn: ",;\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !terms.isEmpty else { return "" }
+        return String(terms.joined(separator: ", ").prefix(320))
+    }
+
+    /// Removes Whisper control placeholders and applies conservative text formatting.
+    private static func clean(_ raw: String, smartFormatting: Bool) -> String? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        text = text.replacingOccurrences(of: "\\s*[\\[\\(][^\\]\\)]*[\\]\\)]\\s*",
-                                         with: " ",
+
+        let placeholders = [
+            "\\[(?:BLANK_AUDIO|SILENCE|MUSIC|APPLAUSE|INAUDIBLE)\\]",
+            "\\((?:Musik|Stille|Applaus|unverständlich)\\)"
+        ]
+        for pattern in placeholders {
+            text = text.replacingOccurrences(of: pattern,
+                                             with: " ",
+                                             options: [.regularExpression, .caseInsensitive])
+        }
+
+        text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard smartFormatting, !text.isEmpty else { return text.isEmpty ? nil : text }
+
+        text = text.replacingOccurrences(of: "\\s+([,.;:!?])",
+                                         with: "$1",
+                                         options: .regularExpression)
+        text = text.replacingOccurrences(of: "([,.;:!?])(?=\\p{L})",
+                                         with: "$1 ",
                                          options: .regularExpression)
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+
+        if let firstLetter = text.firstIndex(where: { $0.isLetter }) {
+            let uppercased = String(text[firstLetter]).uppercased()
+            text.replaceSubrange(firstLetter...firstLetter, with: uppercased)
+        }
+
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
     }
 
     deinit {
-        if let context = context { whisperc_free(context) }
+        inferenceQueue.sync {
+            contextLock.lock()
+            let current = context
+            context = nil
+            contextLock.unlock()
+            if let current { whisperc_free(current) }
+        }
     }
 }
 
@@ -246,7 +348,7 @@ extension WhisperService: URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error = error else { return }
+        guard let error else { return }
         NSLog("[Whisper] Download error: \(error.localizedDescription)")
         downloadContinuation?.resume(returning: nil)
         downloadContinuation = nil
