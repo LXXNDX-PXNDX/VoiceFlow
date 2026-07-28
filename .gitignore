@@ -29,11 +29,6 @@ whisper.cpp/build/
 *.o
 *.a
 
-# Website
-node_modules/
-dist/
-.vite/
-
 # IDE
 .idea/
 .vscode/
