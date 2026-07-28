@@ -2,7 +2,7 @@ name: VoiceFlow macOS build
 
 on:
   push:
-    branches: [performance-ui-overhaul]
+    branches: [main, performance-ui-overhaul]
     paths:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
