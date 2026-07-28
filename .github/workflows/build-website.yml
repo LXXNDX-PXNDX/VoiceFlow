@@ -1,0 +1,53 @@
+name: Build VoiceFlow website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/build-website.yml"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-voiceflow-website
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        working-directory: website
+        run: npm run lint
+
+      - name: Build production site
+        working-directory: website
+        run: npm run build
+
+      - name: Disable Jekyll processing
+        run: touch website/dist/.nojekyll
+
+      - name: Publish compiled site to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./website/dist
+          publish_branch: gh-pages
+          force_orphan: true
