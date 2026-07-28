@@ -1,0 +1,156 @@
+name: Publish VoiceFlow 1.1.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v1.1.0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voiceflow-release-1.1.0
+  cancel-in-progress: false
+
+env:
+  TAG_NAME: v1.1.0
+  RELEASE_NAME: VoiceFlow 1.1.0
+  DMG_NAME: VoiceFlow-1.1.0-arm64.dmg
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify build environment
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          cmake --version
+          gh --version
+
+      - name: Build pinned whisper.cpp libraries
+        run: bash scripts/build-whisper-libs.sh
+
+      - name: Build optimized Apple Silicon app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project VoiceFlow.xcodeproj \
+            -scheme VoiceFlow \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/VoiceFlowDerivedData" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify and package application
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/VoiceFlowDerivedData/Build/Products/Release/VoiceFlow.app"
+          test -d "$APP_PATH"
+          test -x "$APP_PATH/Contents/MacOS/VoiceFlow"
+
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")
+          ARCH=$(lipo -archs "$APP_PATH/Contents/MacOS/VoiceFlow")
+          echo "App version: $VERSION"
+          echo "Executable architecture: $ARCH"
+          test "$VERSION" = "1.1.0"
+          echo "$ARCH" | grep -qw arm64
+
+          # Ad-hoc signing keeps the bundle internally consistent. A notarized Developer ID
+          # release needs private Apple credentials and is intentionally not faked here.
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          STAGING="$RUNNER_TEMP/VoiceFlowDMG"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          ditto "$APP_PATH" "$STAGING/VoiceFlow.app"
+          ln -s /Applications "$STAGING/Applications"
+
+          hdiutil create \
+            -volname "VoiceFlow" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          test -s "$DMG_NAME"
+          shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256"
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## VoiceFlow 1.1.0
+
+          VoiceFlow 1.1 focuses on much lower latency, stronger recognition and a cleaner native macOS interface.
+
+          ### What changed
+
+          - Faster Apple Silicon inference using Metal, Accelerate and Flash Attention
+          - Leading and trailing silence removed before transcription
+          - Lower-allocation audio capture for faster recording finalization
+          - Automatic, Instant and Precise recognition modes
+          - Better short-dictation recognition by resolving the macOS system language
+          - Optional vocabulary hints for names, brands and technical terms
+          - Improved punctuation, spacing and sentence formatting
+          - Real processing-speed feedback inside the app
+          - Redesigned focused home screen and smaller floating recording indicator
+
+          ### Requirements
+
+          - Apple Silicon Mac
+          - macOS 14.0 or later
+
+          ### Installation
+
+          1. Download `VoiceFlow-1.1.0-arm64.dmg`.
+          2. Open the DMG and move VoiceFlow into Applications.
+          3. Because this community build is ad-hoc signed rather than Apple-notarized, macOS may require **right-click → Open** the first time.
+          4. Grant microphone and accessibility permissions when VoiceFlow asks.
+
+          Speech recognition runs locally. Models are downloaded on first use.
+          NOTES
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --latest
+            gh release upload "$TAG_NAME" \
+              "$DMG_NAME" \
+              "$DMG_NAME.sha256" \
+              --clobber
+          else
+            gh release create "$TAG_NAME" \
+              "$DMG_NAME" \
+              "$DMG_NAME.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" --json tagName,name,isDraft,isPrerelease,url,assets
+          gh release download "$TAG_NAME" --pattern "$DMG_NAME" --dir "$RUNNER_TEMP/release-check"
+          cmp "$DMG_NAME" "$RUNNER_TEMP/release-check/$DMG_NAME"
