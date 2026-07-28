@@ -1,0 +1,11 @@
+{
+  "version": "1.1.1",
+  "tag": "v1.1.1",
+  "release_url": "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.1.1",
+  "asset": "VoiceFlow-1.1.1-arm64.dmg",
+  "asset_size_bytes": 2862333,
+  "sha256": "67ce40b5d25b49f033e53ecdb363c6f44aad8e8ce57832988bb535262b2351da",
+  "commit": "dc7b84095fe3b4fb022faad14bdbd5345614ad43",
+  "runtime_test": "whisper.cpp 1.8.6 inference passed",
+  "verified": true
+}
