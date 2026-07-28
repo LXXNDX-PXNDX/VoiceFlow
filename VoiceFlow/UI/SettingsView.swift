@@ -232,8 +232,11 @@ struct SettingsView: View {
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 9) {
-            SectionHeader(title: "Berechtigungen",
-                          subtitle: "VoiceFlow prüft erneut, sobald du aus den Systemeinstellungen zurückkommst.")
+            SectionHeader(
+                title: "Berechtigungen",
+                subtitle: "„Erlaubt“ erscheint nur, wenn macOS VoiceFlow offiziell freigegeben hat."
+            )
+
             Card {
                 VStack(spacing: 0) {
                     permissionRow(title: "Mikrofon",
@@ -243,25 +246,71 @@ struct SettingsView: View {
 
                     Divider().opacity(0.5)
 
-                    SettingRow(title: "Bedienungshilfen",
-                               subtitle: "Für globalen Hotkey und direktes Einfügen.") {
+                    SettingRow(
+                        title: "Bedienungshilfen",
+                        subtitle: "Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen"
+                    ) {
                         if state.accessibilityGranted {
                             Label("Erlaubt", systemImage: "checkmark.circle.fill")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(Theme.green)
                         } else {
-                            HStack(spacing: 7) {
-                                Button("Neu prüfen", action: state.refreshPermissions)
-                                    .controlSize(.small)
-                                Button("Erlauben", action: state.requestAccessibilityAccess)
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                            }
+                            Label("Nicht erlaubt", systemImage: "xmark.circle.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.danger)
                         }
                     }
 
-                    if !state.accessibilityGranted {
+                    Divider().opacity(0.5)
+
+                    if state.accessibilityGranted {
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark.shield.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.green)
+
+                            Text("macOS hat den Zugriff für diese VoiceFlow-Version bestätigt.")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+
+                            Spacer(minLength: 8)
+
+                            Button("Systemeinstellungen", action: state.openAccessibilitySettings)
+                                .controlSize(.small)
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        VStack(alignment: .leading, spacing: 11) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "1.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(.top, 1)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("VoiceFlow in macOS aktivieren")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                    Text("Öffne Bedienungshilfen und schalte VoiceFlow ein. Fehlt VoiceFlow in der Liste, klicke auf „+“ und wähle /Applications/VoiceFlow.app.")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+
+                            HStack(spacing: 8) {
+                                Button("Bedienungshilfen öffnen", action: state.requestAccessibilityAccess)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+
+                                Button("Neu prüfen", action: state.refreshPermissions)
+                                    .controlSize(.small)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 9)
+
                         Divider().opacity(0.5)
+
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "wrench.and.screwdriver.fill")
                                 .font(.system(size: 12))
@@ -269,9 +318,9 @@ struct SettingsView: View {
                                 .padding(.top, 2)
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("Haken gesetzt, aber VoiceFlow erkennt ihn nicht?")
+                                Text("VoiceFlow ist eingeschaltet, bleibt hier aber rot?")
                                     .font(.system(size: 11.5, weight: .medium))
-                                Text("Ein Update kann bei nicht notarisierten Community-Builds einen alten macOS-Eintrag zurücklassen.")
+                                Text("Dann kann ein alter macOS-Eintrag von einer früheren App-Version übrig sein.")
                                     .font(.system(size: 10.5))
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)

@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.voiceflow.app
         PRODUCT_NAME: VoiceFlow
-        MARKETING_VERSION: "1.1.1"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "1.1.2"
+        CURRENT_PROJECT_VERSION: "4"
         INFOPLIST_FILE: VoiceFlow/Info.plist
         # Local developer builds use a stable Apple Development identity. Public
         # community DMGs remain ad-hoc signed until Developer ID credentials exist.

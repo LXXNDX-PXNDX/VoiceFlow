@@ -2,7 +2,7 @@ name: VoiceFlow macOS build
 
 on:
   push:
-    branches: [main, fix-crash-and-permissions]
+    branches: [main]
     paths:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
@@ -35,6 +35,39 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Validate Accessibility permission contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          permissions = Path("VoiceFlow/Utilities/PermissionsManager.swift").read_text()
+          settings = Path("VoiceFlow/UI/SettingsView.swift").read_text()
+
+          required = "return AXIsProcessTrustedWithOptions(options)"
+          if required not in permissions:
+              raise SystemExit("Accessibility status must use Apple's official trust check")
+
+          forbidden = [
+              "AXUIElementCopyAttributeValue",
+              "case .noValue",
+              "case .attributeUnsupported",
+              "case .cannotComplete",
+          ]
+          for token in forbidden:
+              if token in permissions:
+                  raise SystemExit(f"False-positive Accessibility heuristic found: {token}")
+
+          for label in [
+              "Nicht erlaubt",
+              "Bedienungshilfen öffnen",
+              "Datenschutz & Sicherheit → Bedienungshilfen",
+          ]:
+              if label not in settings:
+                  raise SystemExit(f"Missing Accessibility guidance in UI: {label}")
+
+          print("Strict Accessibility status and direct setup guidance verified")
+          PY
 
       - name: Show Xcode environment
         run: |
