@@ -1,28 +1,29 @@
 # VoiceFlow
 
-VoiceFlow is a free macOS speech-to-text app. Speak naturally and turn your words into text for AI chats, messages, notes, and longer writing without typing everything manually.
+VoiceFlow is a free native macOS speech-to-text app. Speak naturally and turn your words into text for AI chats, messages, notes, and longer writing without typing everything manually.
 
-The repository contains both the native macOS app and its public landing page.
+## Download
 
-## macOS app
+Download the current macOS release:
 
-The native app is built with SwiftUI and powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for local speech recognition.
+https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.2.4
 
-### Features
+## Features
 
 - Native macOS app built with SwiftUI
 - Local speech recognition using whisper.cpp
+- No cloud dependency for transcription
 - Runs on Apple Silicon
 - macOS 14.0+ deployment target
 
-### Requirements
+## Requirements
 
 - macOS 14.0 or later
 - Apple Silicon (ARM64)
 - Xcode 16.0
 - Swift 5.9
 
-### App structure
+## Project structure
 
 ```text
 VoiceFlow/
@@ -33,52 +34,14 @@ VoiceFlow/
 └── icon_1024.png        # App icon
 ```
 
-### Build the app
+## Build
+
+The project uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the Xcode project:
 
 ```bash
 xcodegen generate
 open VoiceFlow.xcodeproj
 ```
-
-## Landing page
-
-The landing page is built with:
-
-- React
-- Vite
-- Tailwind CSS
-- Framer Motion
-
-### Run locally
-
-```bash
-npm install
-npm run dev
-```
-
-### Production build
-
-```bash
-npm run build
-```
-
-### Download link
-
-The website download buttons point to the latest GitHub release asset:
-
-```text
-https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/latest/download/VoiceFlow.dmg
-```
-
-Upload the app to a GitHub release with the exact filename `VoiceFlow.dmg`. The landing page will then automatically download the newest release.
-
-### Deploy the website
-
-Import the repository into Vercel with these settings:
-
-- Framework preset: Vite
-- Build command: `npm run build`
-- Output directory: `dist`
 
 ## License
 
