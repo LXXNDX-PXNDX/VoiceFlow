@@ -11,11 +11,8 @@ final class PermissionsManager {
     }
 
     /// Uses only Apple's official TCC-backed trust check.
-    ///
-    /// Do not infer permission from individual AX API return codes: calls such as
-    /// `AXUIElementCopyAttributeValue` can return `noValue`, `attributeUnsupported` or
-    /// `cannotComplete` even when Accessibility access is disabled. Treating those results
-    /// as success caused VoiceFlow 1.1.1 to display a false green permission state.
+    /// Individual Accessibility calls can fail for several unrelated reasons, so their
+    /// return codes must never be interpreted as proof that permission was granted.
     func hasAccessibilityAccess() -> Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
