@@ -38,6 +38,7 @@ jobs:
           xcodebuild -project VoiceFlow.xcodeproj -list
 
       - name: Build VoiceFlow without signing
+        shell: bash
         run: |
           set -o pipefail
           xcodebuild \
@@ -47,4 +48,11 @@ jobs:
             -destination "platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build | xcpretty
+            build 2>&1 | tee build.log | xcpretty
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voiceflow-xcode-build-log
+          path: build.log
