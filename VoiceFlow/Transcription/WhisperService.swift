@@ -49,15 +49,14 @@ final class WhisperService: NSObject {
     private var downloadContinuation: CheckedContinuation<URL?, Never>?
 
     var isModelLoaded: Bool {
-        contextLock.lock(); defer { contextLock.unlock() }
-        return context != nil
+        withContextLock { context != nil }
     }
 
     var modelDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("VoiceFlow", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        let directory = appSupport.appendingPathComponent("VoiceFlow", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
     func localURL(for model: WhisperModel) -> URL {
@@ -70,9 +69,9 @@ final class WhisperService: NSObject {
 
     /// Makes `model` the active one, downloading it first if necessary.
     func prepare(model: WhisperModel) async {
-        contextLock.lock()
-        let alreadyLoaded = loadedModel == model && context != nil
-        contextLock.unlock()
+        let alreadyLoaded = withContextLock {
+            loadedModel == model && context != nil
+        }
 
         if alreadyLoaded {
             state = .ready(model)
@@ -113,11 +112,12 @@ final class WhisperService: NSObject {
                     return
                 }
 
-                self.contextLock.lock()
-                let oldContext = self.context
-                self.context = newContext
-                self.loadedModel = model
-                self.contextLock.unlock()
+                let oldContext = self.withContextLock { () -> WhisperCtx? in
+                    let previous = self.context
+                    self.context = newContext
+                    self.loadedModel = model
+                    return previous
+                }
 
                 if let oldContext { whisperc_free(oldContext) }
                 continuation.resume(returning: true)
@@ -147,12 +147,12 @@ final class WhisperService: NSObject {
     private func download(_ model: WhisperModel) async -> Bool {
         NSLog("[Whisper] Downloading \(model.rawValue) …")
 
-        let tempURL: URL? = await withCheckedContinuation { continuation in
+        let temporaryURL: URL? = await withCheckedContinuation { continuation in
             downloadContinuation = continuation
             downloadSession.downloadTask(with: model.downloadURL).resume()
         }
 
-        guard let tempURL else {
+        guard let temporaryURL else {
             NSLog("[Whisper] Download of \(model.rawValue) failed")
             return false
         }
@@ -162,7 +162,7 @@ final class WhisperService: NSObject {
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
-            try FileManager.default.moveItem(at: tempURL, to: destination)
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
             NSLog("[Whisper] Saved \(model.rawValue) to \(destination.path)")
             return true
         } catch {
@@ -182,14 +182,17 @@ final class WhisperService: NSObject {
 
         guard samples.count > 6_400 else {
             NSLog("[Whisper] Too short: \(String(format: "%.2f", durationSeconds)) s")
-            return TranscriptionResult(text: nil, durationSeconds: durationSeconds, processingSeconds: 0)
+            return TranscriptionResult(text: nil,
+                                       durationSeconds: durationSeconds,
+                                       processingSeconds: 0)
         }
 
         let resolvedLanguage = SpeechLanguage.resolvedCode(for: language)
         let prompt = Self.prompt(from: customVocabulary)
         let threads = Self.threadCount
 
-        return await withCheckedContinuation { continuation in
+        return await withCheckedContinuation {
+            (continuation: CheckedContinuation<TranscriptionResult, Never>) in
             inferenceQueue.async { [weak self] in
                 guard let self else {
                     continuation.resume(returning: TranscriptionResult(text: nil,
@@ -198,11 +201,8 @@ final class WhisperService: NSObject {
                     return
                 }
 
-                self.contextLock.lock()
-                let context = self.context
-                self.contextLock.unlock()
-
-                guard let context else {
+                let currentContext = self.withContextLock { self.context }
+                guard let currentContext else {
                     NSLog("[Whisper] No model loaded")
                     continuation.resume(returning: TranscriptionResult(text: nil,
                                                                        durationSeconds: durationSeconds,
@@ -216,13 +216,15 @@ final class WhisperService: NSObject {
                 buffer.initialize(repeating: 0, count: Int(maxLength))
                 defer { buffer.deallocate() }
 
-                let durationMilliseconds = Int32(min(Int32.max,
-                                                     Int(durationSeconds * 1_000)))
-                let ok = samples.withUnsafeBufferPointer { input -> Bool in
+                let durationMilliseconds = Int32(
+                    min(Double(Int32.max), durationSeconds * 1_000)
+                )
+
+                let succeeded = samples.withUnsafeBufferPointer { input -> Bool in
                     guard let baseAddress = input.baseAddress else { return false }
                     return resolvedLanguage.withCString { languageCString in
                         prompt.withCString { promptCString in
-                            whisperc_transcribe(context,
+                            whisperc_transcribe(currentContext,
                                                 baseAddress,
                                                 Int32(input.count),
                                                 languageCString,
@@ -237,7 +239,7 @@ final class WhisperService: NSObject {
                 }
 
                 let elapsed = CFAbsoluteTimeGetCurrent() - start
-                guard ok else {
+                guard succeeded else {
                     NSLog("[Whisper] Transcription failed")
                     continuation.resume(returning: TranscriptionResult(text: nil,
                                                                        durationSeconds: durationSeconds,
@@ -290,7 +292,9 @@ final class WhisperService: NSObject {
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard smartFormatting, !text.isEmpty else { return text.isEmpty ? nil : text }
+        guard smartFormatting, !text.isEmpty else {
+            return text.isEmpty ? nil : text
+        }
 
         text = text.replacingOccurrences(of: "\\s+([,.;:!?])",
                                          with: "$1",
@@ -309,14 +313,20 @@ final class WhisperService: NSObject {
         return text.isEmpty ? nil : text
     }
 
+    private func withContextLock<Value>(_ operation: () -> Value) -> Value {
+        contextLock.lock()
+        defer { contextLock.unlock() }
+        return operation()
+    }
+
     deinit {
-        inferenceQueue.sync {
-            contextLock.lock()
+        let currentContext = withContextLock { () -> WhisperCtx? in
             let current = context
             context = nil
-            contextLock.unlock()
-            if let current { whisperc_free(current) }
+            loadedModel = nil
+            return current
         }
+        if let currentContext { whisperc_free(currentContext) }
     }
 }
 
@@ -347,7 +357,9 @@ extension WhisperService: URLSessionDownloadDelegate {
         downloadContinuation = nil
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
         guard let error else { return }
         NSLog("[Whisper] Download error: \(error.localizedDescription)")
         downloadContinuation?.resume(returning: nil)
