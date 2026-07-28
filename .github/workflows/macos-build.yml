@@ -6,12 +6,14 @@ on:
     paths:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
+      - "scripts/build-whisper-libs.sh"
       - "project.yml"
       - ".github/workflows/macos-build.yml"
   pull_request:
     paths:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
+      - "scripts/build-whisper-libs.sh"
       - "project.yml"
       - ".github/workflows/macos-build.yml"
   workflow_dispatch:
@@ -38,33 +40,7 @@ jobs:
           xcodebuild -project VoiceFlow.xcodeproj -list
 
       - name: Build pinned whisper.cpp libraries
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth 1 --branch v1.8.6 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
-          cmake -S /tmp/whisper.cpp -B /tmp/whisper-build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DWHISPER_BUILD_EXAMPLES=OFF \
-            -DWHISPER_BUILD_TESTS=OFF \
-            -DWHISPER_BUILD_SERVER=OFF \
-            -DGGML_METAL=ON \
-            -DGGML_ACCELERATE=ON
-          cmake --build /tmp/whisper-build --config Release --parallel 6
-
-          mkdir -p VoiceFlow/Libs
-          for library in libwhisper.a libggml.a libggml-base.a libggml-cpu.a libggml-metal.a libggml-blas.a; do
-            source_path="$(find /tmp/whisper-build -name "$library" -type f -print -quit)"
-            if [[ -z "$source_path" ]]; then
-              echo "Missing required library: $library"
-              find /tmp/whisper-build -name '*.a' -print
-              exit 1
-            fi
-            cp "$source_path" "VoiceFlow/Libs/$library"
-          done
-
-          echo "Prepared static libraries:"
-          ls -lh VoiceFlow/Libs
+        run: bash scripts/build-whisper-libs.sh
 
       - name: Build VoiceFlow without signing
         shell: bash
