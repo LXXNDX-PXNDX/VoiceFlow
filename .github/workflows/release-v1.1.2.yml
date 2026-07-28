@@ -1,0 +1,226 @@
+name: Publish VoiceFlow 1.1.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v1.1.2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voiceflow-release-1.1.2
+  cancel-in-progress: false
+
+env:
+  TAG_NAME: v1.1.2
+  RELEASE_NAME: VoiceFlow 1.1.2
+  DMG_NAME: VoiceFlow-1.1.2-arm64.dmg
+
+jobs:
+  build-test-release:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Accessibility permission contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          permissions = Path("VoiceFlow/Utilities/PermissionsManager.swift").read_text()
+          settings = Path("VoiceFlow/UI/SettingsView.swift").read_text()
+
+          if "return AXIsProcessTrustedWithOptions(options)" not in permissions:
+              raise SystemExit("Accessibility status is not using the official macOS trust check")
+
+          for token in [
+              "AXUIElementCopyAttributeValue",
+              "case .noValue",
+              "case .attributeUnsupported",
+              "case .cannotComplete",
+          ]:
+              if token in permissions:
+                  raise SystemExit(f"False-positive Accessibility heuristic found: {token}")
+
+          for label in [
+              "Nicht erlaubt",
+              "Bedienungshilfen öffnen",
+              "Datenschutz & Sicherheit → Bedienungshilfen",
+              "/Applications/VoiceFlow.app",
+          ]:
+              if label not in settings:
+                  raise SystemExit(f"Missing Accessibility setup guidance: {label}")
+
+          print("Strict Accessibility status and setup link verified")
+          PY
+
+      - name: Build matching whisper.cpp headers and libraries
+        run: bash scripts/build-whisper-libs.sh
+
+      - name: Run Whisper ABI and inference smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/ggml-tiny.bin" \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+          clang -std=c11 -O2 \
+            -I VoiceFlow/Transcription \
+            -I VoiceFlow/Headers \
+            VoiceFlow/Transcription/WhisperC.c \
+            scripts/whisper-smoke-test.c \
+            -L VoiceFlow/Libs \
+            -lwhisper -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-blas \
+            -lc++ \
+            -framework Accelerate \
+            -framework Metal \
+            -framework MetalKit \
+            -framework Foundation \
+            -o "$RUNNER_TEMP/whisper-smoke-test"
+
+          "$RUNNER_TEMP/whisper-smoke-test" "$RUNNER_TEMP/ggml-tiny.bin"
+
+      - name: Build optimized Apple Silicon app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project VoiceFlow.xcodeproj \
+            -scheme VoiceFlow \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/VoiceFlowDerivedData" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify and package application
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/VoiceFlowDerivedData/Build/Products/Release/VoiceFlow.app"
+          test -d "$APP_PATH"
+          test -x "$APP_PATH/Contents/MacOS/VoiceFlow"
+
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")
+          ARCH=$(lipo -archs "$APP_PATH/Contents/MacOS/VoiceFlow")
+          test "$VERSION" = "1.1.2"
+          test "$BUILD" = "4"
+          echo "$ARCH" | grep -qw arm64
+
+          codesign --force --deep --sign - --identifier com.voiceflow.app "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          STAGING="$RUNNER_TEMP/VoiceFlowDMG"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          ditto "$APP_PATH" "$STAGING/VoiceFlow.app"
+          ln -s /Applications "$STAGING/Applications"
+
+          hdiutil create \
+            -volname "VoiceFlow" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          test -s "$DMG_NAME"
+          shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256"
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## VoiceFlow 1.1.2
+
+          This update fixes the Accessibility permission status and setup flow.
+
+          ### Fixed
+
+          - VoiceFlow no longer reports Accessibility access when it is disabled in macOS
+          - Permission state now uses only Apple's official `AXIsProcessTrustedWithOptions` result
+          - Removed the AX return-code heuristic that caused false green status indicators
+          - Added a direct button to **System Settings → Privacy & Security → Accessibility**
+          - Added explicit **Not allowed** status instead of an ambiguous setup button
+          - Added instructions for enabling VoiceFlow or adding `/Applications/VoiceFlow.app` with the `+` button
+          - VoiceFlow automatically checks again when you return from System Settings
+          - Retains the verified Whisper crash fix and real model inference test from 1.1.1
+
+          ### Requirements
+
+          - Apple Silicon Mac
+          - macOS 14.0 or later
+
+          ### Installation
+
+          1. Quit and remove the previous VoiceFlow app from Applications.
+          2. Download `VoiceFlow-1.1.2-arm64.dmg`.
+          3. Move VoiceFlow into Applications.
+          4. Right-click VoiceFlow and select **Open** the first time.
+          5. In VoiceFlow Settings, press **Open Accessibility** and enable VoiceFlow in macOS.
+
+          VoiceFlow runs speech recognition locally. This community build is ad-hoc signed and not Apple-notarized.
+          NOTES
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md --latest
+            gh release upload "$TAG_NAME" "$DMG_NAME" "$DMG_NAME.sha256" --clobber
+          else
+            gh release create "$TAG_NAME" \
+              "$DMG_NAME" \
+              "$DMG_NAME.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+
+      - name: Verify published asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" --json tagName,name,isDraft,isPrerelease,url,assets
+          gh release download "$TAG_NAME" --pattern "$DMG_NAME" --dir "$RUNNER_TEMP/release-check"
+          cmp "$DMG_NAME" "$RUNNER_TEMP/release-check/$DMG_NAME"
+
+      - name: Record verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SIZE=$(stat -f%z "$DMG_NAME")
+          SHA=$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')
+          mkdir -p releases
+          cat > releases/v1.1.2.json <<EOF
+          {
+            "version": "1.1.2",
+            "tag": "v1.1.2",
+            "release_url": "https://github.com/LXXNDX-PXNDX/VoiceFlow/releases/tag/v1.1.2",
+            "asset": "$DMG_NAME",
+            "asset_size_bytes": $SIZE,
+            "sha256": "$SHA",
+            "commit": "$GITHUB_SHA",
+            "accessibility_check": "strict official macOS trust result",
+            "runtime_test": "whisper.cpp 1.8.6 inference passed",
+            "verified": true
+          }
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/v1.1.2.json
+          git commit -m "Record verified VoiceFlow 1.1.2 release"
+          git push origin HEAD:main
