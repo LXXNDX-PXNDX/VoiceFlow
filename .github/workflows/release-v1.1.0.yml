@@ -154,3 +154,52 @@ jobs:
           gh release view "$TAG_NAME" --json tagName,name,isDraft,isPrerelease,url,assets
           gh release download "$TAG_NAME" --pattern "$DMG_NAME" --dir "$RUNNER_TEMP/release-check"
           cmp "$DMG_NAME" "$RUNNER_TEMP/release-check/$DMG_NAME"
+
+      - name: Record verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RELEASE_URL=$(gh release view "$TAG_NAME" --json url --jq .url)
+          CHECKSUM=$(awk '{print $1}' "$DMG_NAME.sha256")
+          ASSET_SIZE=$(stat -f '%z' "$DMG_NAME")
+
+          python3 - "$RELEASE_URL" "$CHECKSUM" "$ASSET_SIZE" "$GITHUB_SHA" <<'PY' > release-success.json
+          import json
+          import sys
+
+          release_url, checksum, asset_size, commit = sys.argv[1:]
+          print(json.dumps({
+              "version": "1.1.0",
+              "tag": "v1.1.0",
+              "release_url": release_url,
+              "asset": "VoiceFlow-1.1.0-arm64.dmg",
+              "asset_size_bytes": int(asset_size),
+              "sha256": checksum,
+              "commit": commit,
+              "verified": True,
+          }, indent=2))
+          PY
+
+          CONTENT=$(python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          print(base64.b64encode(Path('release-success.json').read_bytes()).decode())
+          PY
+          )
+
+          API_PATH="repos/$GITHUB_REPOSITORY/contents/.github/release-v1.1.0-success.json"
+          EXISTING_SHA=$(gh api "$API_PATH" --jq .sha 2>/dev/null || true)
+
+          if [[ -n "$EXISTING_SHA" ]]; then
+            gh api --method PUT "$API_PATH" \
+              -f message="Record verified VoiceFlow 1.1.0 release" \
+              -f content="$CONTENT" \
+              -f sha="$EXISTING_SHA" \
+              -f branch=main >/dev/null
+          else
+            gh api --method PUT "$API_PATH" \
+              -f message="Record verified VoiceFlow 1.1.0 release" \
+              -f content="$CONTENT" \
+              -f branch=main >/dev/null
+          fi
