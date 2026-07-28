@@ -6,6 +6,9 @@
 
 typedef void* WhisperCtx;
 
+// Returns the version of the linked whisper.cpp runtime.
+const char* whisperc_version(void);
+
 WhisperCtx whisperc_init(const char* model_path);
 
 // language: "auto" or NULL for auto-detect, otherwise an ISO code like "de" / "en".
