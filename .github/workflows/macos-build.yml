@@ -1,0 +1,50 @@
+name: VoiceFlow macOS build
+
+on:
+  push:
+    branches: [performance-ui-overhaul]
+    paths:
+      - "VoiceFlow/**"
+      - "VoiceFlow.xcodeproj/**"
+      - "project.yml"
+      - ".github/workflows/macos-build.yml"
+  pull_request:
+    paths:
+      - "VoiceFlow/**"
+      - "VoiceFlow.xcodeproj/**"
+      - "project.yml"
+      - ".github/workflows/macos-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voiceflow-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode environment
+        run: |
+          xcodebuild -version
+          xcodebuild -project VoiceFlow.xcodeproj -list
+
+      - name: Build VoiceFlow without signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VoiceFlow.xcodeproj \
+            -scheme VoiceFlow \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | xcpretty
