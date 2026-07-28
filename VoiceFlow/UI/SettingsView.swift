@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var stats = StatsManager.shared
     @State private var showResetConfirmation = false
+    @State private var showPermissionRepairConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -29,6 +30,15 @@ struct SettingsView: View {
             Button("Abbrechen", role: .cancel) { }
         } message: {
             Text("Wörter, Aufnahmen und Sprechzeit werden auf null gesetzt. Der Verlauf bleibt erhalten.")
+        }
+        .confirmationDialog("Bedienungshilfen reparieren?",
+                            isPresented: $showPermissionRepairConfirmation) {
+            Button("VoiceFlow-Eintrag zurücksetzen", role: .destructive) {
+                state.repairAccessibilityAccess()
+            }
+            Button("Abbrechen", role: .cancel) { }
+        } message: {
+            Text("macOS entfernt nur den alten VoiceFlow-Eintrag. Danach kannst du die aktuelle App erneut erlauben.")
         }
     }
 
@@ -222,18 +232,60 @@ struct SettingsView: View {
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 9) {
-            SectionHeader(title: "Berechtigungen")
+            SectionHeader(title: "Berechtigungen",
+                          subtitle: "VoiceFlow prüft erneut, sobald du aus den Systemeinstellungen zurückkommst.")
             Card {
                 VStack(spacing: 0) {
                     permissionRow(title: "Mikrofon",
                                   granted: state.micGranted,
                                   detail: "Für die lokale Aufnahme.",
                                   action: state.requestMicrophoneAccess)
+
                     Divider().opacity(0.5)
-                    permissionRow(title: "Bedienungshilfen",
-                                  granted: state.accessibilityGranted,
-                                  detail: "Für globalen Hotkey und direktes Einfügen.",
-                                  action: state.requestAccessibilityAccess)
+
+                    SettingRow(title: "Bedienungshilfen",
+                               subtitle: "Für globalen Hotkey und direktes Einfügen.") {
+                        if state.accessibilityGranted {
+                            Label("Erlaubt", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.green)
+                        } else {
+                            HStack(spacing: 7) {
+                                Button("Neu prüfen", action: state.refreshPermissions)
+                                    .controlSize(.small)
+                                Button("Erlauben", action: state.requestAccessibilityAccess)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+
+                    if !state.accessibilityGranted {
+                        Divider().opacity(0.5)
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.amber)
+                                .padding(.top, 2)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Haken gesetzt, aber VoiceFlow erkennt ihn nicht?")
+                                    .font(.system(size: 11.5, weight: .medium))
+                                Text("Ein Update kann bei nicht notarisierten Community-Builds einen alten macOS-Eintrag zurücklassen.")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Button("Reparieren") {
+                                showPermissionRepairConfirmation = true
+                            }
+                            .controlSize(.small)
+                        }
+                        .padding(.vertical, 7)
+                    }
                 }
             }
         }
