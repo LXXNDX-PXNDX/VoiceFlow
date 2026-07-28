@@ -95,9 +95,18 @@ final class AppState: ObservableObject {
 
         Task { await whisper.prepare(model: settings.model) }
 
-        // Permission changes happen in System Settings, outside our process.
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // System Settings is a separate app. Re-check immediately when VoiceFlow becomes
+        // active again, then restart the global monitor when access was newly granted.
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshPermissions() }
+            .store(in: &cancellables)
+
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshPermissions() }
+        }
+        if let permissionTimer {
+            RunLoop.main.add(permissionTimer, forMode: .common)
         }
     }
 
@@ -109,18 +118,55 @@ final class AppState: ObservableObject {
     }
 
     func refreshPermissions() {
-        micGranted = permissions.hasMicrophoneAccess()
-        accessibilityGranted = permissions.hasAccessibilityAccess()
+        let previousAccessibility = accessibilityGranted
+        let currentMicrophone = permissions.hasMicrophoneAccess()
+        let currentAccessibility = permissions.hasAccessibilityAccess()
+
+        micGranted = currentMicrophone
+        accessibilityGranted = currentAccessibility
+
+        if currentAccessibility && !previousAccessibility {
+            NSLog("[Permissions] Accessibility became available; restarting hotkey monitor")
+            hotkeys.start()
+        }
     }
 
     func requestMicrophoneAccess() {
         permissions.requestMicrophoneAccess { [weak self] _ in
-            Task { @MainActor in self?.refreshPermissions() }
+            Task { @MainActor in
+                self?.refreshPermissions()
+                self?.schedulePermissionRefreshes()
+            }
         }
     }
 
     func requestAccessibilityAccess() {
         permissions.promptForAccessibility()
+        schedulePermissionRefreshes()
+    }
+
+    func repairAccessibilityAccess() {
+        accessibilityGranted = false
+        _ = permissions.repairAccessibilityAccess()
+        schedulePermissionRefreshes()
+    }
+
+    func openMicrophoneSettings() {
+        permissions.openMicrophoneSettings()
+    }
+
+    func openAccessibilitySettings() {
+        permissions.openAccessibilitySettings()
+    }
+
+    private func schedulePermissionRefreshes() {
+        Task { [weak self] in
+            for delay in [300_000_000, 900_000_000, 1_800_000_000] as [UInt64] {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+                self?.refreshPermissions()
+            }
+        }
     }
 
     func redownloadModel() {
@@ -141,6 +187,7 @@ final class AppState: ObservableObject {
         guard phase != .recording else { return }
         guard phase != .transcribing else { return }
 
+        refreshPermissions()
         guard micGranted else {
             requestMicrophoneAccess()
             show(.error("Kein Mikrofonzugriff. Bitte in den Systemeinstellungen erlauben."))
@@ -178,8 +225,6 @@ final class AppState: ObservableObject {
                 guard let self, let start = self.recordingStart else { return }
                 self.elapsed = Date().timeIntervalSince(start)
 
-                // If a key-up is ever missed — screen lock, app switch or a stuck
-                // modifier — stop before the recording can grow without bound.
                 if self.elapsed >= Self.maxRecordingSeconds {
                     NSLog("[App] Reached maximum recording length, stopping")
                     self.stopRecording()
@@ -201,8 +246,6 @@ final class AppState: ObservableObject {
         hotkeys.syncToggleState(isRecording: false)
         playSound(named: "Pop")
 
-        // Snapshot settings before leaving the main actor. A change made while inference is
-        // running applies to the next dictation, not halfway through this one.
         let language = settings.language
         let mode = settings.recognitionMode
         let vocabulary = settings.customVocabulary
@@ -256,6 +299,7 @@ final class AppState: ObservableObject {
         if settings.autoPaste {
             let pasted = textInserter.insertText(text)
             if !pasted {
+                refreshPermissions()
                 show(.error("In die Zwischenablage kopiert — Bedienungshilfen fehlen zum Einfügen."))
                 return
             }

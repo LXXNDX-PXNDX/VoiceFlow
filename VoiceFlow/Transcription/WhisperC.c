@@ -3,11 +3,25 @@
 #include <string.h>
 #include <stdio.h>
 
+const char* whisperc_version(void) {
+    return whisper_version();
+}
+
 WhisperCtx whisperc_init(const char* model_path) {
+    if (!model_path || model_path[0] == '\0') return NULL;
+
     struct whisper_context_params cparams = whisper_context_default_params();
     cparams.use_gpu = true;
     cparams.flash_attn = true;
+    cparams.dtw_token_timestamps = false;
+
     struct whisper_context* ctx = whisper_init_from_file_with_params(model_path, cparams);
+    if (!ctx) {
+        fprintf(stderr, "[WhisperC] GPU initialization failed; retrying with CPU fallback\n");
+        cparams.use_gpu = false;
+        cparams.flash_attn = false;
+        ctx = whisper_init_from_file_with_params(model_path, cparams);
+    }
     return (WhisperCtx)ctx;
 }
 
@@ -56,7 +70,6 @@ bool whisperc_transcribe(WhisperCtx raw_ctx,
         params.initial_prompt = initial_prompt;
     }
 
-    // NULL / "auto" makes whisper.cpp run its own language detection.
     if (language && language[0] != '\0' && strcmp(language, "auto") != 0) {
         params.language = language;
         params.detect_language = false;

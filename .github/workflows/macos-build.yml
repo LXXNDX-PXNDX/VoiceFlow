@@ -2,11 +2,12 @@ name: VoiceFlow macOS build
 
 on:
   push:
-    branches: [main, performance-ui-overhaul]
+    branches: [main, fix-crash-and-permissions]
     paths:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
       - "scripts/build-whisper-libs.sh"
+      - "scripts/whisper-smoke-test.c"
       - "project.yml"
       - ".github/workflows/macos-build.yml"
   pull_request:
@@ -14,6 +15,7 @@ on:
       - "VoiceFlow/**"
       - "VoiceFlow.xcodeproj/**"
       - "scripts/build-whisper-libs.sh"
+      - "scripts/whisper-smoke-test.c"
       - "project.yml"
       - ".github/workflows/macos-build.yml"
   workflow_dispatch:
@@ -28,7 +30,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -39,8 +41,32 @@ jobs:
           xcodebuild -version
           xcodebuild -project VoiceFlow.xcodeproj -list
 
-      - name: Build pinned whisper.cpp libraries
+      - name: Build matching whisper.cpp headers and libraries
         run: bash scripts/build-whisper-libs.sh
+
+      - name: Run Whisper ABI and inference smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/ggml-tiny.bin" \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+          clang -std=c11 -O2 \
+            -I VoiceFlow/Transcription \
+            -I VoiceFlow/Headers \
+            VoiceFlow/Transcription/WhisperC.c \
+            scripts/whisper-smoke-test.c \
+            -L VoiceFlow/Libs \
+            -lwhisper -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-blas \
+            -lc++ \
+            -framework Accelerate \
+            -framework Metal \
+            -framework MetalKit \
+            -framework Foundation \
+            -o "$RUNNER_TEMP/whisper-smoke-test"
+
+          "$RUNNER_TEMP/whisper-smoke-test" "$RUNNER_TEMP/ggml-tiny.bin"
 
       - name: Build Debug and Release without signing
         shell: bash

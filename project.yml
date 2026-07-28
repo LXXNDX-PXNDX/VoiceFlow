@@ -22,12 +22,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.voiceflow.app
         PRODUCT_NAME: VoiceFlow
-        MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.1.1"
+        CURRENT_PROJECT_VERSION: "3"
         INFOPLIST_FILE: VoiceFlow/Info.plist
-        # Signed with a real developer certificate, not ad-hoc: macOS ties the
-        # Accessibility grant to the code signature, and an ad-hoc signature changes
-        # with every build — which silently invalidated the permission each rebuild.
+        # Local developer builds use a stable Apple Development identity. Public
+        # community DMGs remain ad-hoc signed until Developer ID credentials exist.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Development"
         DEVELOPMENT_TEAM: U8ZG4H6LAP
