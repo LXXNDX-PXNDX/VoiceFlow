@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.voiceflow.app
         PRODUCT_NAME: VoiceFlow
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         INFOPLIST_FILE: VoiceFlow/Info.plist
         # Signed with a real developer certificate, not ad-hoc: macOS ties the
         # Accessibility grant to the code signature, and an ad-hoc signature changes
