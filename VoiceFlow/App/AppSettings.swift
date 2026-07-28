@@ -30,6 +30,41 @@ enum HotkeyMode: String, CaseIterable, Identifiable {
     var isHold: Bool { self != .fnDoubleTap }
 }
 
+/// Controls the decoder, not the downloaded model. Keeping those choices separate makes
+/// performance predictable and avoids reloading hundreds of megabytes for every mode change.
+enum RecognitionMode: String, CaseIterable, Identifiable {
+    case automatic
+    case instant
+    case precise
+
+    var id: String { rawValue }
+
+    /// Stable value passed through the C bridge.
+    var decoderCode: Int32 {
+        switch self {
+        case .automatic: return 0
+        case .instant:   return 1
+        case .precise:   return 2
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .automatic: return "Automatisch"
+        case .instant:   return "Sofort"
+        case .precise:   return "Präzise"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .automatic: return "Schnelle Standarderkennung mit guter Qualität."
+        case .instant:   return "Minimale Wartezeit für kurze Diktate."
+        case .precise:   return "Mehr Rechenzeit für schwierige Namen und längere Texte."
+        }
+    }
+}
+
 enum WhisperModel: String, CaseIterable, Identifiable {
     case tiny, base, small
 
@@ -41,9 +76,17 @@ enum WhisperModel: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .tiny:  return "Tiny — am schnellsten"
-        case .base:  return "Base — ausgewogen"
-        case .small: return "Small — beste Qualität"
+        case .tiny:  return "Tiny — maximal schnell"
+        case .base:  return "Base — empfohlen"
+        case .small: return "Small — höchste Qualität"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .tiny:  return "Tiny"
+        case .base:  return "Base"
+        case .small: return "Small"
         }
     }
 
@@ -62,7 +105,7 @@ struct SpeechLanguage: Identifiable, Hashable {
     var id: String { code }
 
     static let all: [SpeechLanguage] = [
-        SpeechLanguage(code: "auto", label: "Automatisch erkennen"),
+        SpeechLanguage(code: "auto", label: "Automatisch (Systemsprache)"),
         SpeechLanguage(code: "de", label: "Deutsch"),
         SpeechLanguage(code: "en", label: "Englisch"),
         SpeechLanguage(code: "fr", label: "Französisch"),
@@ -77,6 +120,19 @@ struct SpeechLanguage: Identifiable, Hashable {
 
     static func label(for code: String) -> String {
         all.first { $0.code == code }?.label ?? code.uppercased()
+    }
+
+    /// Whisper's language detection is useful for mixed-language recordings, but it costs
+    /// noticeable time and is less reliable for a two- or three-word dictation. "Automatic"
+    /// therefore uses the macOS language whenever it is supported and only falls back to
+    /// Whisper detection for unknown system locales.
+    static func resolvedCode(for selection: String) -> String {
+        guard selection == "auto" else { return selection }
+        guard let systemCode = Locale.current.language.languageCode?.identifier.lowercased(),
+              all.contains(where: { $0.code == systemCode }) else {
+            return "auto"
+        }
+        return systemCode
     }
 }
 
@@ -96,6 +152,20 @@ final class AppSettings: ObservableObject {
 
     @Published var model: WhisperModel {
         didSet { defaults.set(model.rawValue, forKey: Keys.model) }
+    }
+
+    @Published var recognitionMode: RecognitionMode {
+        didSet { defaults.set(recognitionMode.rawValue, forKey: Keys.recognitionMode) }
+    }
+
+    /// Comma- or line-separated names and specialist terms that are supplied as a small
+    /// Whisper prompt. This is local, optional and substantially improves uncommon words.
+    @Published var customVocabulary: String {
+        didSet { defaults.set(customVocabulary, forKey: Keys.customVocabulary) }
+    }
+
+    @Published var smartFormatting: Bool {
+        didSet { defaults.set(smartFormatting, forKey: Keys.smartFormatting) }
     }
 
     /// Paste the transcript into the frontmost app. When off, it only lands on the clipboard.
@@ -124,6 +194,9 @@ final class AppSettings: ObservableObject {
         hotkeyMode = HotkeyMode(rawValue: defaults.string(forKey: Keys.hotkeyMode) ?? "") ?? .fnHold
         language = defaults.string(forKey: Keys.language) ?? "auto"
         model = WhisperModel(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .base
+        recognitionMode = RecognitionMode(rawValue: defaults.string(forKey: Keys.recognitionMode) ?? "") ?? .automatic
+        customVocabulary = defaults.string(forKey: Keys.customVocabulary) ?? ""
+        smartFormatting = defaults.object(forKey: Keys.smartFormatting) as? Bool ?? true
         autoPaste = defaults.object(forKey: Keys.autoPaste) as? Bool ?? true
         playSounds = defaults.object(forKey: Keys.playSounds) as? Bool ?? true
         showPill = defaults.object(forKey: Keys.showPill) as? Bool ?? true
@@ -136,10 +209,8 @@ final class AppSettings: ObservableObject {
                 if SMAppService.mainApp.status != .enabled {
                     try SMAppService.mainApp.register()
                 }
-            } else {
-                if SMAppService.mainApp.status == .enabled {
-                    try SMAppService.mainApp.unregister()
-                }
+            } else if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
             }
         } catch {
             NSLog("[Settings] Launch at login failed: \(error.localizedDescription)")
@@ -150,6 +221,9 @@ final class AppSettings: ObservableObject {
         static let hotkeyMode = "vf_hotkeyMode"
         static let language = "vf_language"
         static let model = "vf_model"
+        static let recognitionMode = "vf_recognitionMode"
+        static let customVocabulary = "vf_customVocabulary"
+        static let smartFormatting = "vf_smartFormatting"
         static let autoPaste = "vf_autoPaste"
         static let playSounds = "vf_playSounds"
         static let showPill = "vf_showPill"

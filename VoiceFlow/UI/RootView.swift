@@ -7,7 +7,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "Start"
+        case .home: return "Diktieren"
         case .history: return "Verlauf"
         case .settings: return "Einstellungen"
         }
@@ -17,7 +17,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "waveform"
         case .history: return "clock.arrow.circlepath"
-        case .settings: return "gearshape"
+        case .settings: return "slider.horizontal.3"
         }
     }
 }
@@ -29,7 +29,7 @@ struct RootView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            Divider()
+            Divider().opacity(0.65)
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,54 +38,70 @@ struct RootView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Theme.accentGradient)
-                        .frame(width: 26, height: 26)
-                    Image(systemName: "waveform")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                Text("VoiceFlow")
-                    .font(.system(size: 14, weight: .bold))
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 34)
-            .padding(.bottom, 18)
+            brand
 
             ForEach(SidebarTab.allCases) { item in
-                SidebarButton(item: item, isSelected: tab == item) { tab = item }
+                SidebarButton(item: item, isSelected: tab == item) {
+                    withAnimation(.easeOut(duration: 0.15)) { tab = item }
+                }
             }
 
             Spacer(minLength: 12)
             statusFooter
         }
-        .frame(width: 186)
+        .frame(width: 178)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(.ultraThinMaterial)
+    }
+
+    private var brand: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Theme.accent)
+                    .frame(width: 30, height: 30)
+                Image(systemName: "waveform")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("VoiceFlow")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Local dictation")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 34)
+        .padding(.bottom, 20)
     }
 
     private var statusFooter: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                 Text(statusText)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10.5, weight: .semibold))
                     .lineLimit(1)
             }
-            Text(state.settings.hotkeyMode.label)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 5) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 9.5))
+                Text(state.settings.hotkeyMode.label)
+                    .font(.system(size: 9.5))
+                    .lineLimit(2)
+            }
+            .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 14)
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 12)
     }
 
     private var statusColor: Color {
@@ -99,13 +115,13 @@ struct RootView: View {
 
     private var statusText: String {
         if !state.micGranted { return "Mikrofon fehlt" }
-        if !state.accessibilityGranted { return "Bedienungshilfen fehlen" }
+        if !state.accessibilityGranted { return "Zugriff fehlt" }
         switch state.modelState {
-        case .ready(let model): return "Bereit · \(model.rawValue)"
-        case .downloading(let progress): return "Lädt \(Int(progress * 100)) %"
-        case .loading: return "Modell startet …"
+        case .ready(let model): return "Bereit · \(model.shortLabel)"
+        case .downloading(let progress): return "Download \(Int(progress * 100)) %"
+        case .loading: return "Modell startet"
         case .failed: return "Modellfehler"
-        case .idle: return "Startet …"
+        case .idle: return "Initialisierung"
         }
     }
 
@@ -129,20 +145,28 @@ private struct SidebarButton: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12, weight: .semibold))
                     .frame(width: 16)
                 Text(item.title)
                     .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(isSelected ? Color.white : Color.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .foregroundStyle(isSelected ? Theme.accent : Color.primary.opacity(hovering ? 0.90 : 0.72))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? AnyShapeStyle(Theme.accentGradient)
-                                     : AnyShapeStyle(Color.primary.opacity(hovering ? 0.07 : 0)))
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? Theme.accent.opacity(0.11)
+                                     : Color.primary.opacity(hovering ? 0.045 : 0))
             )
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule()
+                        .fill(Theme.accent)
+                        .frame(width: 3, height: 19)
+                        .offset(x: -2)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

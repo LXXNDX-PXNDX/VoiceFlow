@@ -23,6 +23,8 @@ final class AppState: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var micGranted = false
     @Published private(set) var accessibilityGranted = false
+    @Published private(set) var lastProcessingSeconds: Double?
+    @Published private(set) var lastRealtimeFactor: Double?
 
     static let waveformBars = 36
     static let maxRecordingSeconds: TimeInterval = 120
@@ -45,6 +47,17 @@ final class AppState: ObservableObject {
 
     var isRecording: Bool { phase == .recording }
     var isBusy: Bool { phase == .recording || phase == .transcribing }
+
+    var speedSummary: String? {
+        guard let processing = lastProcessingSeconds,
+              let factor = lastRealtimeFactor,
+              processing > 0 else { return nil }
+
+        if factor > 0, factor < 1 {
+            return "\(String(format: "%.1f", 1 / factor))× schneller als Echtzeit"
+        }
+        return "Fertig in \(String(format: "%.1f", processing)) s"
+    }
 
     private init() {
         audioRecorder.onLevel = { [weak self] level in
@@ -121,19 +134,12 @@ final class AppState: ObservableObject {
     // MARK: - Recording
 
     func toggleRecording() {
-        if isRecording {
-            stopRecording()
-        } else {
-            startRecording()
-        }
+        isRecording ? stopRecording() : startRecording()
     }
 
     func startRecording() {
         guard phase != .recording else { return }
-
-        if case .transcribing = phase {
-            return
-        }
+        guard phase != .transcribing else { return }
 
         guard micGranted else {
             requestMicrophoneAccess()
@@ -169,19 +175,19 @@ final class AppState: ObservableObject {
         elapsedTimer?.invalidate()
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self = self, let start = self.recordingStart else { return }
+                guard let self, let start = self.recordingStart else { return }
                 self.elapsed = Date().timeIntervalSince(start)
 
-                // If a key-up is ever missed — screen lock, app switch, a stuck
-                // modifier — the recorder would otherwise run until it fills memory.
+                // If a key-up is ever missed — screen lock, app switch or a stuck
+                // modifier — stop before the recording can grow without bound.
                 if self.elapsed >= Self.maxRecordingSeconds {
                     NSLog("[App] Reached maximum recording length, stopping")
                     self.stopRecording()
                 }
             }
         }
-        if let timer = elapsedTimer {
-            RunLoop.main.add(timer, forMode: .common)
+        if let elapsedTimer {
+            RunLoop.main.add(elapsedTimer, forMode: .common)
         }
     }
 
@@ -190,19 +196,30 @@ final class AppState: ObservableObject {
 
         stopTimers()
         let samples = audioRecorder.stopRecording()
-        let duration = elapsed
+        let capturedDuration = elapsed
         phase = .transcribing
         hotkeys.syncToggleState(isRecording: false)
         playSound(named: "Pop")
 
+        // Snapshot settings before leaving the main actor. A change made while inference is
+        // running applies to the next dictation, not halfway through this one.
         let language = settings.language
+        let mode = settings.recognitionMode
+        let vocabulary = settings.customVocabulary
+        let smartFormatting = settings.smartFormatting
         let targetName = NSWorkspace.shared.frontmostApplication?.localizedName
 
         Task { [weak self] in
-            guard let self = self else { return }
-            let result = await self.whisper.transcribe(samples: samples, language: language)
+            guard let self else { return }
+            let result = await self.whisper.transcribe(samples: samples,
+                                                       language: language,
+                                                       mode: mode,
+                                                       customVocabulary: vocabulary,
+                                                       smartFormatting: smartFormatting)
             await MainActor.run {
-                self.finish(result: result, duration: duration, appName: targetName)
+                self.finish(result: result,
+                            capturedDuration: capturedDuration,
+                            appName: targetName)
             }
         }
     }
@@ -215,18 +232,25 @@ final class AppState: ObservableObject {
         show(.idle)
     }
 
-    private func finish(result: TranscriptionResult, duration: Double, appName: String?) {
+    private func finish(result: TranscriptionResult,
+                        capturedDuration: Double,
+                        appName: String?) {
+        lastProcessingSeconds = result.processingSeconds
+        lastRealtimeFactor = result.realtimeFactor
+
         guard let text = result.text, !text.isEmpty else {
-            show(.error(duration < 0.5 ? "Zu kurz — bitte etwas länger sprechen."
-                                       : "Nichts verstanden. Bitte erneut versuchen."))
+            show(.error(capturedDuration < 0.5
+                        ? "Zu kurz — bitte etwas länger sprechen."
+                        : "Nichts verstanden. Bitte erneut versuchen."))
             return
         }
 
         let transcript = Transcript(text: text,
-                                    durationSeconds: result.durationSeconds,
+                                    durationSeconds: max(result.durationSeconds, capturedDuration),
                                     appName: appName)
         history.add(transcript)
-        stats.recordSession(words: transcript.wordCount, durationSeconds: result.durationSeconds)
+        stats.recordSession(words: transcript.wordCount,
+                            durationSeconds: transcript.durationSeconds)
         stats.lastTranscript = text
 
         if settings.autoPaste {
@@ -252,10 +276,8 @@ final class AppState: ObservableObject {
 
     private func append(level: Float) {
         guard phase == .recording else { return }
-        var next = levels
-        next.removeFirst()
-        next.append(level)
-        levels = next
+        levels.removeFirst()
+        levels.append(level)
     }
 
     /// Shows a transient phase and falls back to `.idle` after a moment.
@@ -274,7 +296,7 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard let self = self, self.phase == newPhase else { return }
+                guard let self, self.phase == newPhase else { return }
                 self.phase = .idle
             }
         }
